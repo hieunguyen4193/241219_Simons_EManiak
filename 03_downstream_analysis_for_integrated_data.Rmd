@@ -1,0 +1,428 @@
+---
+title: "Analysis on the integrated dataset"
+author:
+  - "trnguyen@ukaachen.de"
+date: "Last update on `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    keep_md: no
+    df_print: paged
+    toc: true
+    toc_float:
+      toc_collapsed: false
+    toc_depth: 3
+    number_sections: true
+    theme: lumen
+params:
+  input.case: NA
+---
+
+
+```{css zoom-lib-src, echo = FALSE}
+script src = "https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"
+```
+
+```{js zoom-jquery, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+<style type="text/css">
+    div.datatables { height: auto !important;}
+</style>
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='hide', fig.width=14, fig.height=10}
+#####----------------------------------------------------------------------#####
+#
+# trnguyen@ukaachen.de
+#
+#####----------------------------------------------------------------------#####
+
+##### clean up #####
+# gc()
+# rm(list = ls())
+
+scrna_pipeline_src <- "/home/hieunguyen/CRC1382/src_2023/src_pipeline/scRNA_GEX_pipeline/processes_src"
+source(file.path(scrna_pipeline_src, "import_libraries.R"))
+source(file.path(scrna_pipeline_src, "helper_functions.R"))
+source(file.path(scrna_pipeline_src, "s8_integration_and_clustering.R"))
+#####----------------------------------------------------------------------#####
+# CONFIGURATIONS 
+#####----------------------------------------------------------------------#####
+num.PCA <- 25
+num.PC.used.in.UMAP <- 25
+num.PC.used.in.Clustering <- 25
+regressOut_mode <- NULL
+features_to_regressOut <- NULL
+use.sctransform <- TRUE
+vars.to.regress <- c("percent.mt")
+cluster.resolution <- 0.5
+analysis.round <- "1st"
+
+input.case <- params$input.case
+# input.case <- "with_IGgenes"
+# input.case <- "without_IGgenes"
+
+PROJECT <- "241219_BSimons_EManiak_v0.1"
+
+outdir <- "/home/hieunguyen/CRC1382/outdir"
+path.to.main.input <- file.path(outdir, PROJECT)
+path.to.main.output <- file.path(outdir, PROJECT, "data_analysis")
+path.to.02.output <- file.path(path.to.main.output, "02_output")
+
+path.to.03.output <- file.path(path.to.main.output, "03_output", input.case)
+dir.create(path.to.03.output, showWarnings = FALSE, recursive = TRUE)
+
+path.to.s.obj <- file.path(path.to.02.output, input.case, "s8_output", "241219_BSimons_EManiak_v0.1.output.s8.rds")
+s.obj <- readRDS(path.to.s.obj)
+
+path.to.project.src <- "/home/hieunguyen/CRC1382/src_2023/241219_Simons_EManiak"
+compare.genelist <- readxl::read_excel(file.path(path.to.project.src, "20250212 genes plasmablasts IgG secretion.xlsx")) %>% 
+  pull(names)
+```
+
+# UMAP
+## All samples
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+DimPlot(object = s.obj, reduction = "cca_UMAP", label = TRUE, label.box = TRUE, repel = TRUE, group.by = "cca.cluster.0.5")
+```
+
+## UMAP of each sample {.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+for (sample.id in unique(s.obj$name)){
+  cat(sprintf("### %s \n", sample.id))
+  p <- DimPlot(object = subset(s.obj, name == sample.id), 
+               reduction = "cca_UMAP", label = TRUE, label.box = TRUE, repel = TRUE, group.by = "cca.cluster.0.5")
+  print(p)
+  cat("\n \n")
+}
+```
+
+# Number of cells in each sample in each cluster
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+table(s.obj@meta.data$name, s.obj@meta.data$cca.cluster.0.5) %>% data.frame() %>%
+  pivot_wider(names_from = "Var1", values_from = "Freq") %>% create_dt()
+```
+
+# Cluster marker genes
+
+Identify differentially expressed genes in each cluster. 
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='hide', fig.height=10, fig.width=18}
+Idents(s.obj) <- "cca.cluster.0.5"
+if (file.exists(file.path(path.to.03.output, "DE_cluster_marker_genes.rds")) == FALSE){
+  DefaultAssay(s.obj) <- "SCT"
+  s.obj <- PrepSCTFindMarkers(s.obj)
+  cluster.markers <- FindAllMarkers(object = s.obj, assay = "SCT", test.use = "wilcox", slot = "data", min.pct = 0.5)
+  cluster.markers <- subset(cluster.markers, cluster.markers$p_val_adj < 0.05 & cluster.markers$avg_log2FC > 0)
+  saveRDS(cluster.markers, file.path(path.to.03.output, "DE_cluster_marker_genes.rds"))
+} else {
+  cluster.markers <- readRDS(file.path(path.to.03.output, "DE_cluster_marker_genes.rds"))
+}
+```
+
+## Feature plot {.tabset}
+```{r echo=FALSE, fig.height=12, fig.width=20, message=FALSE, warning=FALSE, results='asis'}
+for (cluster.id in sort(unique(cluster.markers$cluster))){
+  DefaultAssay(s.obj) <- "SCT"
+  cat(sprintf("### Cluster %s \n", cluster.id))
+  tmp.cluster.markers <- subset(cluster.markers, cluster.markers$cluster == cluster.id) %>% arrange(desc(avg_log2FC))
+  p <- FeaturePlot(object = s.obj, reduction = "cca_UMAP", features = head(tmp.cluster.markers, 9)$gene, ncol = 3, label = TRUE, pt.size = 0.5, label.size = 5, label.color = "red", slot = "data")  
+  print(p)
+  cat("\n \n")
+}
+```
+
+## Dot plot{.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=20, fig.height=12}
+for (cluster.id in sort(unique(cluster.markers$cluster))){
+  DefaultAssay(s.obj) <- "SCT"
+  cat(sprintf("### Cluster %s \n", cluster.id))
+  tmp.cluster.markers <- subset(cluster.markers, cluster.markers$cluster == cluster.id) %>% arrange(desc(avg_log2FC))
+  p <- DotPlot(object = s.obj, features = head(tmp.cluster.markers, 9)$gene)  
+  print(p)
+  cat("\n \n")
+}
+```
+
+## Violin plot{.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=20, fig.height=12}
+for (cluster.id in sort(unique(cluster.markers$cluster))){
+  DefaultAssay(s.obj) <- "SCT"
+  cat(sprintf("### Cluster %s \n", cluster.id))
+  tmp.cluster.markers <- subset(cluster.markers, cluster.markers$cluster == cluster.id) %>% arrange(desc(avg_log2FC))
+  p <- VlnPlot(object = s.obj, features = head(tmp.cluster.markers, 9)$gene, slot = "data")  
+  print(p)
+  cat("\n \n")
+}
+```
+
+## Full tables of DE genes {.tabset}
+```{r echo=FALSE, results='asis', include=FALSE}
+cluster.markers %>% create_dt()
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=20, fig.height=12}
+all.cluster.ids <- sort(unique(s.obj$cca.cluster.0.5))
+for (cluster.id in all.cluster.ids){
+  tmp.table <- subset(cluster.markers, cluster.markers$cluster == cluster.id) %>% arrange(desc(avg_log2FC))
+  cat(paste("\n\n### Cluster: ", cluster.id, "##\n"))
+  print( htmltools::tagList(datatable(tmp.table, extensions = 'Buttons',
+                                      filter = "top",
+                                      options = list(dom = 'Blfrtip',
+                                                     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                                                     lengthMenu = list(c(10,25,50,-1),
+                                                                       c(10,25,50,"All")),
+                                                     columnDefs = list(list(
+                                                       targets = "_all",
+                                                       render = JS(
+                                                         "function(data, type, row, meta) {",
+                                                         "return type === 'display' && data != null && data.length > 100 ?",
+                                                         "'<span title=\"' + data + '\">' + data.substr(0, 100) + '...</span>' : data;",
+                                                         "}")
+                                                     ))
+                                      ))))
+  cat("\n \n")  
+}
+```
+
+# Some marker genes plots
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+gene.list <- c("Jchain", 
+               "Prdm1",
+               "Xbp1",
+               "Mzb1",
+               "Ccr10",
+               "Cd19",
+               "CD3e",
+               "Gzma",
+               "Cxcr4",
+               "Sema4a",
+               "Ighm",
+               "Ighd",
+               "Igha1",
+               "Ihga2",
+               "Tnfrsf17") %>% toupper()
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+print(sprintf("Genes that are not in the data: %s",
+              paste(setdiff(gene.list, row.names(s.obj)), collapse = ", ")))
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+gene.list <- intersect(gene.list, row.names(s.obj))
+```
+
+## Feature plot {.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+for (g in gene.list){
+  cat(sprintf("### %s \n", g))
+  p <- FeaturePlot(object = s.obj, reduction = "cca_UMAP", features = c(g), label = TRUE, pt.size = 0.5, label.size = 5, label.color = "red", slot = "data")   
+  print(p)
+  cat("\n \n")
+}
+
+```
+
+## Violin plot {.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+for (g in gene.list){
+  cat(sprintf("### %s \n", g))
+  p <- VlnPlot(object = s.obj, features = c(g), slot = "data")  
+   
+  print(p)
+  cat("\n \n")
+}
+
+```
+
+# Gene list plots {.tabset}
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+gene.of.interest <- c("Jchain", "Prdm1", "Xbp1", "Mzb1", "Ccr10", "Cd19",
+  "Cd3e", "Gzma", "Cxcr4", "Sema4a", "Ighm", "Ighd", "Igha1", "Igha2", "Tnfrsf17"
+) %>% toupper()
+
+for (g in gene.of.interest){
+  cat(sprintf("## Gene %s \n", g))
+  p <- VlnPlot(object = s.obj, features = c(g))
+  print(p)
+  cat("\n \n")
+}
+```
+
+# Differentially expressed gene between IgAN and control
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+if (file.exists(file.path(path.to.03.output, str_replace(basename(path.to.s.obj), ".rds", ".addedGroup.rds"))) == FALSE){
+  meta.data <- s.obj@meta.data %>% rownames_to_column("barcode") %>%
+  rowwise() %>%
+    mutate(group = ifelse(name %in% c("K1", "K2"), "Control", "Patient")) %>%
+    column_to_rownames("barcode")
+  
+  meta.data <- meta.data[row.names(s.obj@meta.data), ]
+  s.obj <- AddMetaData(object = s.obj, metadata = meta.data$group, col.name = "group")
+  saveRDS(s.obj, file.path(path.to.03.output, str_replace(basename(path.to.s.obj), ".rds", ".addedGroup.rds")))
+} else {
+  print("reading in data with added patient/control group.")
+  s.obj <- readRDS(file.path(path.to.03.output, str_replace(basename(path.to.s.obj), ".rds", ".addedGroup.rds")))
+}
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+sample1 <- "Patient"
+sample2 <- "Control"
+
+meta.data <- s.obj@meta.data %>% rownames_to_column("barcode")
+count.sample.per.cluster <- table(meta.data$group, 
+                                  meta.data$cca.cluster.0.5) %>%
+  data.frame() %>%
+  pivot_wider(names_from = "Var1", values_from = "Freq")
+
+exclude.clusters <- c()
+for (cluster.id in count.sample.per.cluster$Var2){
+  count1 <- subset(count.sample.per.cluster, count.sample.per.cluster$Var2 == cluster.id)$Control
+  count2 <- subset(count.sample.per.cluster, count.sample.per.cluster$Var2 == cluster.id)$Patient
+  if (count1 < 10 | count2 < 10){
+    exclude.clusters <- c(exclude.clusters, c(cluster.id))
+  }
+}
+count.sample.per.cluster %>% create_dt()
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+if (length(exclude.clusters) != 0){
+  print(sprintf("We exclude the following clusters %s because they have less than 10 cells", paste(exclude.clusters, collapse = ", ")))
+}
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+if (file.exists(file.path(path.to.03.output, "de_markers.rds")) == FALSE){
+  de.markers <- list()
+  for (cluster.id in setdiff(unique(s.obj$cca.cluster.0.5), exclude.clusters)){
+    tmp.s.obj <- subset(s.obj, cca.cluster.0.5 == cluster.id)
+    tmp.s.obj <- PrepSCTFindMarkers(tmp.s.obj)
+    tmp.de.markers <- FindMarkers(object = tmp.s.obj, 
+                                  ident.1 = sample1, 
+                                  ident.2 = sample2,
+                                  group.by = "group", 
+                                  test.use = "wilcox", 
+                                  assay = "SCT",
+                                  recorrect_umi = FALSE)
+    de.markers[[sprintf("cluster_%s", cluster.id)]] <- tmp.de.markers
+  }
+  saveRDS(de.markers, file.path(path.to.03.output, "de_markers.rds"))
+} else {
+  de.markers <- readRDS(file.path(path.to.03.output, "de_markers.rds"))
+}
+```
+
+## List of genes to compare between Patient and Control
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+compare.genedf <- data.frame(compare.Gene = intersect(compare.genelist, row.names(s.obj))) 
+
+compare.genedf %>% create_dt() 
+
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+sig.diff.de.markers <- list()
+for (cluster.id in names(de.markers)){
+  tmpdf <- de.markers[[cluster.id]] %>% subset(p_val_adj <= 0.05) 
+  tmpdf <- tmpdf %>% rownames_to_column("Gene")
+  sig.diff.de.markers[[cluster.id]] <- tmpdf
+}
+```
+
+## Full tables of DE genes {.tabset}
+```{r echo=FALSE, results='asis', include=FALSE}
+de.markers$cluster_0 %>% create_dt()
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=20, fig.height=12}
+for (cluster.id in names(de.markers)){
+  tmp.table <- sig.diff.de.markers[[cluster.id]] %>% arrange(desc(avg_log2FC))
+  cat(sprintf("### %s \n", cluster.id))
+  print( htmltools::tagList(datatable(tmp.table, extensions = 'Buttons',
+                                      filter = "top",
+                                      options = list(dom = 'Blfrtip',
+                                                     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                                                     lengthMenu = list(c(10,25,50,-1),
+                                                                       c(10,25,50,"All")),
+                                                     columnDefs = list(list(
+                                                       targets = "_all",
+                                                       render = JS(
+                                                         "function(data, type, row, meta) {",
+                                                         "return type === 'display' && data != null && data.length > 100 ?",
+                                                         "'<span title=\"' + data + '\">' + data.substr(0, 100) + '...</span>' : data;",
+                                                         "}")
+                                                     ))
+                                      ))))
+  cat("\n \n")  
+}
+```
+
+# Genes which are differentially expressed in clusters between Patient vs Control
+
+## Full table {.tabset}
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+for (cluster.id in sort(names(de.markers))){
+  compare.genedf[[cluster.id]] <- unlist(lapply(compare.genedf$compare.Gene, 
+                                                function(x){
+                                                  if (x %in% sig.diff.de.markers[[cluster.id]]$Gene){
+                                                    return("yes")
+                                                  } else {
+                                                    return("no")
+                                                  }
+                                                }))
+}
+```
+
+```{r echo=FALSE, results='asis', include=FALSE}
+compare.genedf %>% create_dt()
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=20, fig.height=12}
+for (cluster.id in sort(names(de.markers)) ){
+  tmp.table <- compare.genedf[, c("compare.Gene", cluster.id)]
+  tmp.table <- subset(tmp.table, tmp.table[[cluster.id]] == "yes")
+  cat(sprintf("### %s \n", cluster.id))
+  print( htmltools::tagList(datatable(tmp.table, extensions = 'Buttons',
+                                      filter = "top",
+                                      options = list(dom = 'Blfrtip',
+                                                     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                                                     lengthMenu = list(c(10,25,50,-1),
+                                                                       c(10,25,50,"All")),
+                                                     columnDefs = list(list(
+                                                       targets = "_all",
+                                                       render = JS(
+                                                         "function(data, type, row, meta) {",
+                                                         "return type === 'display' && data != null && data.length > 100 ?",
+                                                         "'<span title=\"' + data + '\">' + data.substr(0, 100) + '...</span>' : data;",
+                                                         "}")
+                                                     ))
+                                      ))))
+  cat("\n \n")  
+}
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results='asis', fig.width=14, fig.height=10}
+```
+
+

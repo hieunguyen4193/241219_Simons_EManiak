@@ -1,0 +1,10 @@
+[gene-expression],,,,
+reference,/media/hieunguyen/HD01/storage/REF/refdata-gex-GRCh38-2024-A,,,
+expect-cells,1000,,,
+chemistry,SC5P-R2,,,
+[vdj],,,,
+reference,/media/hieunguyen/HD01/storage/REF/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0,,,
+[libraries],,,,
+fastq_id,fastqs,lanes,feature_types,subsample_rate
+P1_GEX,/media/hieunguyen/HD01/Downloads/Elisa/downloaded_from_cloud/FASTQ/mkfastq/outs/fastq_path/HM5MWDRX5/P1_GEX,any,gene expression,
+P1_VDJ,/media/hieunguyen/HD01/Downloads/Elisa/downloaded_from_cloud/FASTQ/mkfastq/outs/fastq_path/HM5MWDRX5/P1_VDJ,any,vdj,
