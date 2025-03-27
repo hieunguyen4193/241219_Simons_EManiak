@@ -19,7 +19,6 @@ vars.to.regress <- c("percent.mt")
 cluster.resolution <- 0.5
 analysis.round <- "1st"
 
-# input.case <- params$input.case
 # input.case <- "with_IGgenes"
 input.case <- "without_IGgenes"
 
@@ -99,6 +98,7 @@ for (c in new.cols){
   s.obj <- AddMetaData(object = s.obj, metadata = meta.data[[c]], col.name = c)
 }
 
+all.samples <- unique(s.obj$name)
 #####-------------------------------------------------------------------------------#####
 ##### clonal data analysis
 #####-------------------------------------------------------------------------------#####
@@ -116,3 +116,27 @@ clonedf <- clonedf %>% rowwise() %>%
   subset(is.na(CloneID) == FALSE) %>% arrange(desc(total_count))
 
 writexl::write_xlsx(clonedf, file.path(path.to.04.output, "clonedf.xlsx"))
+
+#####-------------------------------------------------------------------------------#####
+##### plot clones on UMAP
+#####-------------------------------------------------------------------------------#####
+path.to.save.clone.UMAP <- file.path(path.to.04.output, "clones_on_UMAP")
+dir.create(path.to.save.clone.UMAP, showWarnings = FALSE, recursive = TRUE)
+
+top.clones <- subset(clonedf, clonedf$total_count >= 10)
+
+for (clone.id in unique(top.clones$CloneID)){
+  savename <- str_replace_all(clone.id, ":", "___")
+  available.samples <- subset(clonedf, clonedf$CloneID == clone.id)
+  plot.barcodes <- list()
+  for (sample.id in all.samples){
+    if (available.samples[[sprintf("count_%s", sample.id)]] != 0){
+      plot.barcodes[[sample.id]] <- subset(meta.data, meta.data$CTstrict == clone.id & meta.data$name == sample.id)$barcode
+    } 
+  }
+  p <- DimPlot(object = s.obj, reduction = "cca_UMAP", label = TRUE, label.box = TRUE, group.by = "cca.cluster.0.5", 
+               cells.highlight = plot.barcodes, cols.highlight = hue_pal()(4), sizes.highlight = 2)
+  ggsave(plot = p, filename = sprintf("UMAP_%s.svg", savename), path = path.to.save.clone.UMAP, device = "svg", width = 14, height = 10, dpi = 300)
+}
+
+# EOF
