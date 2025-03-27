@@ -71,34 +71,40 @@ if (file.exists(file.path(path.to.VDJ.output, "corrected.csv")) == FALSE){
 #####-------------------------------------------------------------------------------#####
 ##### get all VDJ files
 #####-------------------------------------------------------------------------------#####
-all.vdj.files <- Sys.glob(file.path(path.to.VDJ.output, "*annotated_contigs_clonaltype*.csv"))
-vdjdf <- data.frame()
-for (input.file in all.vdj.files){
-  tmpdf <- read.csv(input.file)
-  if ("X" %in% colnames(tmpdf)){
-    tmpdf <- subset(tmpdf, select = -c(X))
+if (file.exists(file.path(path.to.04.output, "241219_BSimons_EManiak_v0.1.output.s8.addedVDJ.rds")) == FALSE){
+  all.vdj.files <- Sys.glob(file.path(path.to.VDJ.output, "*annotated_contigs_clonaltype*.csv"))
+  vdjdf <- data.frame()
+  for (input.file in all.vdj.files){
+    tmpdf <- read.csv(input.file)
+    if ("X" %in% colnames(tmpdf)){
+      tmpdf <- subset(tmpdf, select = -c(X))
+    }
+    tmpdf$SampleID <- str_replace(str_replace(basename(input.file), "annotated_contigs_clonaltype_", ""), ".csv", "")
+    tmpdf <- tmpdf %>% rowwise() %>%
+      mutate(barcode = str_replace(barcode, sprintf("%s_%s", SampleID, SampleID), SampleID))
+    vdjdf <- rbind(vdjdf, tmpdf)
   }
-  tmpdf$SampleID <- str_replace(str_replace(basename(input.file), "annotated_contigs_clonaltype_", ""), ".csv", "")
-  tmpdf <- tmpdf %>% rowwise() %>%
-    mutate(barcode = str_replace(barcode, sprintf("%s_%s", SampleID, SampleID), SampleID))
-  vdjdf <- rbind(vdjdf, tmpdf)
-}
-
-meta.data <- s.obj@meta.data %>% rownames_to_column("barcode")
-meta.data <- merge(meta.data, vdjdf, by.x = "barcode", by.y = "barcode", all.x = TRUE)
-
-meta.data <- meta.data %>% column_to_rownames("barcode")
-
-meta.data <- meta.data[row.names(s.obj@meta.data),]
-
-old.cols <- colnames(s.obj@meta.data)
-new.cols <- setdiff(colnames(meta.data), c(old.cols, "barcode"))
-
-for (c in new.cols){
-  s.obj <- AddMetaData(object = s.obj, metadata = meta.data[[c]], col.name = c)
+  
+  meta.data <- s.obj@meta.data %>% rownames_to_column("barcode")
+  meta.data <- merge(meta.data, vdjdf, by.x = "barcode", by.y = "barcode", all.x = TRUE)
+  
+  meta.data <- meta.data %>% column_to_rownames("barcode")
+  
+  meta.data <- meta.data[row.names(s.obj@meta.data),]
+  
+  old.cols <- colnames(s.obj@meta.data)
+  new.cols <- setdiff(colnames(meta.data), c(old.cols, "barcode"))
+  
+  for (c in new.cols){
+    s.obj <- AddMetaData(object = s.obj, metadata = meta.data[[c]], col.name = c)
+  }
+  saveRDS(s.obj, file.path(path.to.04.output, "241219_BSimons_EManiak_v0.1.output.s8.addedVDJ.rds"))
+} else {
+  s.obj <- readRDS(file.path(path.to.04.output, "241219_BSimons_EManiak_v0.1.output.s8.addedVDJ.rds"))
 }
 
 all.samples <- unique(s.obj$name)
+
 #####-------------------------------------------------------------------------------#####
 ##### clonal data analysis
 #####-------------------------------------------------------------------------------#####
