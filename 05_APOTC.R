@@ -48,11 +48,31 @@ path.to.04.output <- file.path(path.to.main.output, "04_output", input.case)
 path.to.05.output <- file.path(path.to.main.output, "05_output", input.case)
 dir.create(path.to.05.output, showWarnings = FALSE, recursive = TRUE)
 
+colors <- tableau_color_pal(palette = "Tableau 20")(20)
+
 path.to.s.obj <- file.path(path.to.04.output, "241219_BSimons_EManiak_v0.1.output.s8.addedVDJ.rds")
 s.obj <- readRDS(path.to.s.obj)
+clonedf <- readxl::read_excel(file.path(path.to.04.output, "clonedf.xlsx"))
+
+top.clones <- subset(clonedf, clonedf$total_count >= 10)
+plot.clonedf <- head(top.clones, 10)
+plot.clonedf$color <- head(colors, nrow(plot.clonedf))
 
 Idents(s.obj) <- "cca.cluster.0.5"
 clone.name <- "CTstrict"
 reduction.name <- "cca_UMAP"
 
-s.obj <- RunAPOTC(seurat_obj = s.obj, reduction_base = reduction.name, clonecall = clone.name)
+s.obj <- RunAPOTC(seurat_obj = s.obj, 
+                  reduction_base = reduction.name, 
+                  clonecall = clone.name)
+tmp.plot <- vizAPOTC(s.obj, clonecall = clone.name,
+                     verbose = FALSE,
+                     reduction_base = reduction.name,
+                     show_labels = TRUE,
+                     repulsion_strength = 5,
+                     legend_position = "top_right",
+                     legend_sizes = 2) %>%
+  showCloneHighlight(clonotype =  as.character(plot.clonedf$CloneID),
+                     fill_legend = TRUE,
+                     color_each = plot.clonedf$color,
+                     default_color = "lightgray")
